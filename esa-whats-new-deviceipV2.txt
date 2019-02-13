@@ -1,0 +1,36 @@
+module whatsNewDeviceIP;
+
+/*
+Rule Name: What's New for deviceIP
+Author: Eric Partington
+Modified: 2019-01-10
+version: 4
+*/
+
+//Update learning phase to desired number of days
+@Name('Named Window - learningWindowDeviceIP')
+//@RSAPersist	
+CREATE VARIABLE integer lPhaseInDaysDeviceIP = 1;
+CREATE WINDOW lPhaseDeviceIP.win:length(1) (learningPhase long);
+INSERT INTO lPhaseDeviceIP
+SELECT current_timestamp.plus(lPhaseInDaysDeviceIP days) as learningPhase FROM PATTERN[Event];
+
+
+//Window to Store New Data
+@Name('Named Window - whatsNewDeviceIP')
+//testing this should be disabled to reset the window on a new push of the rule
+@RSAPersist(serialization=Serialization.JSON)
+CREATE WINDOW whatsNewDeviceIP.win:keepall().std:unique(device_ip, device_type) (device_ip string, device_host string, device_type string, lc_cid string, did string, device_class string, device_group string, alias_host string, time long, medium string);
+
+
+//store in the window
+@Name('Insert DeviceIP')
+INSERT INTO whatsNewDeviceIP
+SELECT device_ip, device_host, device_type, lc_cid, did, device_class, device_group ,cast(alias_host, string) as alias_host, time, medium FROM Event(device_ip IS NOT NULL AND device_ip NOT IN (SELECT device_ip FROM whatsNewDeviceIP));
+
+//compare to client stored in the window
+@RSAAlert
+SELECT device_ip, device_host, device_type, lc_cid, did, device_class, device_group, cast(alias_host, string) as alias_host, time, medium
+FROM Event(device_ip NOT IN (SELECT device_ip FROM whatsNewDeviceIP) AND device_ip IS NOT NULL
+AND current_timestamp > (SELECT learningPhase FROM lPhaseDeviceIP))
+OUTPUT ALL EVERY 1 hours;
